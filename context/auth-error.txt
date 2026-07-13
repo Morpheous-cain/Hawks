@@ -1,0 +1,672 @@
+
+● Now I see the bug. Trace the flow:
+
+  1. User logs in on Landing page (/)
+  2. Landing renders — useAuth gets session, user set, but userRole fetch is deferred via setTimeout(0)
+  3. User clicks "Open Console" — navigates to /* → hits ProtectedRoute → RequireRole
+  4. ProtectedRoute checks isAuthenticated = !!user → true (user exists) → passes
+  5. RequireRole checks loading → false (already set) → checks user → exists → checks userRole
+
+  Root cause: loading flips to false BEFORE fetchUserRole completes. The setTimeout(0) defers the DB call, but loading gets set to false inside that same setTimeout
+  callback. However, if the onAuthStateChange event fires, sets user immediately, then the setTimeout fires — but loading might already be false from a previous session
+  check (getSession warming).
+
+  Actually, look closer at lines 56-59 and 62-67:
+
+  if (newSession?.user) {
+    setTimeout(async () => {
+      const role = await fetchUserRole(newSession.user.id);
+      setUserRole(role);
+      if (!initialised.current) {
+        initialised.current = true;
+        setLoading(false);    // loading=false only AFTER role fetched
+      }
+    }, 0);
+  } else {
+    setUserRole(null);
+    if (!initialised.current) {
+      initialised.current = true;
+      setLoading(false);      // loading=false immediately for no-user
+    }
+  }
+
+  For a user WITH session: loading stays true until fetchUserRole completes. So RequireRole should see loading=true and show spinner, not deny.
+
+  But there's also getSession() warming at line 86. It doesn't set loading, but it might trigger onAuthStateChange synchronously. If that event fires with a session →
+  user set → setTimeout → loading stays true until role fetch.
+
+  Hmm. Let me check the Landing page — maybe the "Open Console" button is clicked before loading flips false, or there's a redirect/navigation timing issue.
+
+    - It checks loading first - shows spinner
+    - Then checks !user - redirects to /auth
+●   - Then checks !userRole && user - shows spinner (waiting for role)check for a proxy or gateway intercepting the request
+    - Then checks if role is allowed
+✻ Ba
+  The issue seems to be: when user lands on landing page (which is /) and logs in, they're authenticated but the role fetch might not have completed yet when they click> "Open Console" which navigates to a protected route.
+  ⎿
+  Wait, looking more carefully at the code flow:
+> - In useAuth.ts, when newSession?.user exists, it calls setTimeout(async () => { const role = await fetchUserRole(...) })                                               - loading is only set to false INSIDE that setTimeout callback (line 56-58)
+● - So loading should be true until the role is fetchedss-120b-medium] [403]: HTTP 403 (reset after 12s)
+
+✻ But there's a subtle issue: what if the user is already authenticated when the app loads (session restored)? The onAuthStateChange fires with the existing session,
+  but the setTimeout might not have completed by the time the user clicks "Open Console".
+>
+  Actually, looking at the RequireRole component:default for new sessions
+  - It checks if (loading) - shows spinner
+> - Then if (!user) - redirects to auth                                                                                                                                   - Then if (!userRole && user) - shows spinner waiting for role
+· Analyze auth flow… (1m 25s)
+  The problem might be that when the user is on the landing page (which is NOT protected by ProtectedRoute), they log in, then click "Open Console" which navigates to a  route that IS protected.
+
+  But the ProtectedRoute only checks isAuthenticated and loading - it doesn't check for userRole. ──────────────────────────────────────────────────────────────────────
+> 
+  The issue is that the ConsoleLayout routes are wrapped with RequireRole which DOES check for userRole, but there's a timing issue where loading is false but userRole   is still null because the setTimeout hasn't completed.t · ctrl+t to hide tasks · ← for agents
+
+  Let me trace through:
+  1. User lands on / (Landing page) - no auth check
+  2. User clicks login, goes to /auth
+  3. User logs in successfully
+  4. Supabase auth state changes, onAuthStateChange fires with new session
+  5. setSession, setUser called immediately
+  6. setTimeout starts to fetch role
+  7. loading is STILL true at this point (not set to false yet)
+  8. User is redirected to /management (or similar)
+  9. ProtectedRoute checks loading - if still true, shows spinner
+  10. setTimeout callback fires, fetches role, sets userRole, sets loading=false
+  11. ProtectedRoute re-renders, sees loading=false, isAuthenticated=true, renders children
+  12. RequireRole checks userRole - should now be set
+
+  Wait, but the user says "we hit access denied page even though we have the correct role". This suggests userRole is being set but is not matching the CONSOLE_ROLES.
+
+  Let me check the isConsoleRole function:
+  function isConsoleRole(role: string | null): boolean {
+    if (!role) return false;
+    const n = role.toLowerCase().replace(/\s+/g, "_");
+    return CONSOLE_ROLES.has(n) || [...CONSOLE_ROLES].some(r => n.includes(r));
+  }
+
+  It normalizes the role by lowercasing and replacing spaces with underscores. Then checks if it's in the set OR if any console role is a substring of the normalized
+  role.
+
+  But the issue might be that the role from the database is something like "control_room_officer" but the user has a different role, or the role is stored differently
+  in the DB.
+
+  Actually, wait - let me re-read the issue: "when im on landing page and log in then click open console we hit access denied page eventhough we have the correct role"
+
+  The landing page is at / which uses RootGate that just renders <Landing />. There's no ProtectedRoute on the landing page.
+
+  When user clicks "Open Console", they probably navigate to /management or similar. That route is:
+  <Route path="/management" element={<ManagementPortalHome />} />
+
+  But wait, looking at the routes in ConsoleLayout, the routes don't have RequireRole on individual routes - the RequireRole wraps the entire ConsoleLayout:
+  <Route path="/*" element={
+    <ProtectedRoute>
+      <RequireRole>
+        <ConsoleLayout />
+      </RequireRole>
+    </ProtectedRoute>
+  } />
+
+  And there's also the /platform/:platformId/* route which has its own RequireRole.
+
+  The issue might be that when the user logs in from the landing page, they might have a role that's not in the CONSOLE_ROLES set, OR there's a timing issue.
+
+  Let me look at the ProtectedRoute - it only checks isAuthenticated and loading. It doesn't wait for userRole. So if loading becomes false before userRole is set
+  (which shouldn't happen based on the code, but maybe there's a race), the ProtectedRoute would render ConsoleLayout, then RequireRole would see userRole as null and
+  show the spinner (line 98-104 in RequireRole).
+
+  Actually, looking at the RequireRole code again:
+  if (!userRole && user) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  This shows a spinner if userRole is null but user exists. So it should wait.
+
+  But wait - the comment on line 94-97 says:
+  // Role not loaded yet — wait instead of denying. The role fetch in useAuth
+  // is async (deferred via setTimeout inside onAuthStateChange), so userRole
+  // can still be null here even after loading flipped false. Treating null as
+  // "denied" was the bug — CEO hit the 403 page because of this race.
+
+  So they KNOW about this race condition and added a spinner for it. But the user is seeing "Access Denied" not a spinner. That means allowed is false.
+
+  Let me check the allowed logic:
+  const allowed = allowedRoles
+    ? allowedRoles.some(r => userRole?.toLowerCase() === r.toLowerCase())
+    : isConsoleRole(userRole);
+
+  If allowedRoles is not provided (which is the case for the main console layout), it uses isConsoleRole(userRole).
+
+  The isConsoleRole function normalizes the role and checks against the set. But what if the role from the database has a different format?
+
+  Let me check what the user_roles table returns. In useAuth.ts:
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', userId)
+    .limit(1);
+  return data && data.length > 0 ? String(data[0].role) : null;
+
+  It returns the role column as a string. The app_role enum in the database has values like 'ceo', 'coo', 'control_room_officer', etc.
+
+  But the CONSOLE_ROLES set includes both the canonical DB roles AND legacy role strings. The isConsoleRole function does role.toLowerCase().replace(/\s+/g, "_") - so
+  it converts spaces to underscores and lowercases.
+
+  If the database returns "control_room_officer", it becomes "control_room_officer" which IS in the set.
+  If the database returns "Control Room Officer", it becomes "control_room_officer" which IS in the set.
+
+  But wait - what if the role in the database is something like "control" (the shorthand)? Let me check the CONSOLE_ROLES set - it includes "control" (line 50).
+
+  Actually, looking more carefully at the CONSOLE_ROLES set, it includes:
+  - "control_room_officer" (line 11)
+  - "control" (line 50)
+  - "control_room_operator" (line 32)
+
+  So "control" should match.
+
+  But the user says "eventhough we have the correct role". So the role IS correct but still getting access denied.
+
+  Let me think about what could cause isConsoleRole to return false for a valid role:
+
+  1. The role string from DB has unexpected characters
+  2. The role is null/undefined when checked
+  3. There's a timing issue where userRole is checked before it's set
+
+  Actually, I notice something in the RequireRole - the useEffect for audit logging runs when allowed changes. But allowed depends on userRole. If userRole changes from
+  null to a value, allowed changes from false to true, and the effect runs. But the effect only logs when !allowed.
+
+  Wait, there's another issue. The RequireRole component returns the "Access Denied" page when !allowed. But the allowed check uses userRole?.toLowerCase(). If userRole
+  is null, userRole?.toLowerCase() is undefined, and isConsoleRole(null) returns false (line 61: if (!role) return false;).
+
+  So if userRole is null, allowed is false, and it shows "Access Denied" - NOT the spinner!
+
+  But wait, there's the check at line 98-104:
+  if (!userRole && user) {
+    return <spinner />;
+  }
+
+  This should catch the case where userRole is null but user exists. So it should show spinner, not access denied.
+
+  UNLESS... the user is also null at that point? But the check at line 92 returns <Navigate to="/auth" /> if !user.
+
+  Let me trace through again:
+  1. User logs in
+  2. onAuthStateChange fires with newSession containing user
+  3. setUser(newSession?.user ?? null) - user is set
+  4. setTimeout starts to fetch role
+  5. loading is still true
+  6. User navigates to /management
+  7. ProtectedRoute sees loading=true, shows spinner
+  8. setTimeout callback fires, role fetched, setUserRole(role), setLoading(false)
+  9. ProtectedRoute re-renders, loading=false, isAuthenticated=true, renders ConsoleLayout
+  10. RequireRole renders, loading=false, user exists, userRole exists (just set)
+  11. allowed = isConsoleRole(userRole) - should be true
+  12. Renders children
+
+  But what if step 8 and 9 happen in a different order? What if the navigation to /management happens BEFORE the setTimeout callback fires?
+
+  Actually, the user is on the landing page, clicks login, goes to /auth, logs in, then clicks "Open Console". The "Open Console" button probably navigates to
+  /management or similar.
+
+  The login flow in /auth page probably calls supabase.auth.signInWithPassword() which triggers the onAuthStateChange callback. The callback sets user/session, starts
+  the setTimeout for role fetch. The auth page probably then navigates to /management on success.
+
+  If the auth page navigates immediately after signInWithPassword resolves (which happens before the onAuthStateChange callback completes the role fetch), then:
+  1. signInWithPassword resolves
+  2. Auth page navigates to /management
+  3. ProtectedRoute checks loading - but loading might still be true because the onAuthStateChange callback hasn't set loading=false yet (it only does that inside the
+  setTimeout after role fetch)
+  4. ProtectedRoute shows spinner
+  5. onAuthStateChange callback's setTimeout fires, fetches role, sets loading=false
+  6. ProtectedRoute re-renders, renders ConsoleLayout
+  7. RequireRole checks userRole - should be set now
+
+  This should work. But maybe there's a case where loading becomes false but userRole is still null?
+
+  Looking at the useAuth code:
+  if (newSession?.user) {
+    setTimeout(async () => {
+      const role = await fetchUserRole(newSession.user.id);
+      setUserRole(role);
+      if (!initialised.current) {
+        initialised.current = true;
+        setLoading(false);
+      }
+    }, 0);
+  } else {
+    setUserRole(null);
+    if (!initialised.current) {
+      initialised.current = true;
+      setLoading(false);
+    }
+  }
+
+  The setLoading(false) is ONLY called inside the setTimeout callback, AFTER setUserRole(role). So loading should never become false before userRole is set (for the
+  authenticated case).
+
+  But wait - there's also the getSession() call at line 86-92:
+  supabase.auth.getSession().catch(() => {
+    if (!initialised.current) {
+      initialised.current = true;
+      setLoading(false);
+    }
+  });
+
+  This is a fallback - if getSession() fails, it sets loading=false without setting userRole. But this only runs if getSession() throws an error. And
+  initialised.current would be false at that point (since the onAuthStateChange hasn't fired yet for a new login).
+
+  Actually, for a new login, onAuthStateChange SHOULD fire with the new session. The getSession() is just to warm the cache.
+
+  But what if there's a race where getSession() resolves (or fails) BEFORE onAuthStateChange fires? The initialised.current ref prevents double-setting.
+
+  Let me think about the actual user flow again:
+  1. User on landing page (/) - not authenticated
+  2. User clicks "Login" - goes to /auth
+  3. User enters credentials, submits
+  4. signInWithPassword called
+  5. On success, onAuthStateChange fires with SIGNED_IN event and new session
+  6. Callback sets user, starts setTimeout for role fetch
+  7. Auth page navigates to /management (or wherever)
+  8. ProtectedRoute sees loading=true (because setTimeout hasn't completed), shows spinner
+  9. setTimeout callback fires, fetches role, sets userRole, sets loading=false
+  10. ProtectedRoute re-renders, renders ConsoleLayout
+  11. RequireRole checks userRole - should be set
+
+  This should work. Unless the auth page navigates BEFORE the onAuthStateChange fires? But signInWithPassword returns a promise that resolves after the auth state
+  change.
+
+  Actually, looking at Supabase docs, signInWithPassword returns the session in the response, but the onAuthStateChange listener fires asynchronously. The promise from
+  signInWithPassword resolves with the session data, but the auth state change might fire before or after.
+
+  But in the useAuth code, the onAuthStateChange listener is set up in a useEffect with empty deps, so it's set up on mount. When the user logs in, the listener should
+  catch the SIGNED_IN event.
+
+  I think the issue might be something else. Let me check if there's a case where the user has a role that's not in CONSOLE_ROLES.
+
+  Actually, the user says "eventhough we have the correct role". Let me check what role they might have. The CONSOLE_ROLES set is quite comprehensive but maybe their
+  role is something like "security_officer" or "guard" which is not in the console roles.
+
+  But wait - the landing page is for unauthenticated users. When they log in, they should have a role assigned in user_roles table. If they're a security guard, they
+  might not have a console role.
+
+  Actually, looking at the CONSOLE_ROLES, it includes operational roles like "control_room_officer", "operations_supervisor", etc. But it doesn't include "guard" or
+  "officer" (except "supervisor" on line 33).
+
+  The user might be logging in as a role that's not in the console roles. But they say "correct role" - so maybe they're an admin or manager.
+
+  Let me check the isConsoleRole function more carefully:
+  function isConsoleRole(role: string | null): boolean {
+    if (!role) return false;
+    const n = role.toLowerCase().replace(/\s+/g, "_");
+    return CONSOLE_ROLES.has(n) || [...CONSOLE_ROLES].some(r => n.includes(r));
+  }
+
+  The second part [...CONSOLE_ROLES].some(r => n.includes(r)) checks if any console role is a SUBSTRING of the normalized role. This is problematic!
+
+  For example, if the role is "admin_assistant", it would match "admin" (line 17) because "admin_assistant".includes("admin") is true.
+
+  But also, if the role is "control_room_officer", it would match "control" (line 50) because "control_room_officer".includes("control") is true.
+
+  This substring matching could cause false positives, but not false negatives (it would only allow MORE roles, not fewer).
+
+  Wait, actually it could cause false negatives if the role is something like "control" and the check is n.includes(r) where r is "control_room_officer" -
+  "control".includes("control_room_officer") is false. But the first check CONSOLE_ROLES.has(n) would catch "control" since it's in the set.
+
+  So the substring check is only for cases where the role string CONTAINS a console role as a substring. This seems backwards - it should probably check if the role is
+  a substring of a console role, not the other way around.
+
+  But this wouldn't cause a valid role to be denied - it would only cause extra roles to be allowed.
+
+  Let me think about what could cause a DENIAL for a valid role...
+
+  Oh wait! I see a potential issue. The userRole from the database might be the enum value like 'control_room_officer'::app_role, but when fetched via Supabase, it
+  comes back as a string. But what if the enum value has a different case or format?
+
+  Actually, the app_role enum values are all lowercase with underscores based on the migration. So "control_room_officer", "operations_supervisor", etc.
+
+  But the CONSOLE_ROLES set has "operations_supervisor" (line 12) and also "ops_supervisor" is mentioned as an alias in the comment. But "ops_supervisor" is NOT in the
+  set! Only "operations_supervisor" is.
+
+  If the database has "ops_supervisor" as a role value, it wouldn't match. But the migration defines the enum with "operations_supervisor".
+
+  Let me check the CLAUDE.md again for the enum values:
+  'ceo', 'coo', 'control_room_officer', 'operations_supervisor',
+  'hr_custodian', 'administrator', 'bdo', 'system_admin'
+
+  So the canonical roles are those. The CONSOLE_ROLES set includes all of these plus many aliases.
+
+  But wait - "hr_custodian" is in the enum but is it in CONSOLE_ROLES? Let me check... I don't see "hr_custodian" in the set. I see "hr_manager", "hr_officer", "hr" but
+  not "hr_custodian".
+
+  Similarly, "bdo" is in the enum (line 14) and in the set (line 14).
+  "system_admin" is in the enum and in the set (line 15).
+  "administrator" is in the enum and in the set (line 18).
+
+  But "hr_custodian" is NOT in the set! If a user has role "hr_custodian", they would be denied access to the console.
+
+  Also "ceo" and "coo" are in the set (lines 9-10).
+
+  So if the user has role "hr_custodian", they'd get access denied even though it's a valid DB role.
+
+  But the user says "correct role" - so maybe they have a role that should work but doesn't.
+
+  Let me also check: the RequireRole component is used in two places in App.tsx:
+  1. Wrapping the entire ConsoleLayout (line 289-290)
+  2. Wrapping PlatformPage for /platform/:platformId/* route (line 281-282)
+
+  For the ConsoleLayout, no allowedRoles prop is passed, so it uses isConsoleRole(userRole).
+
+  For the PlatformPage, no allowedRoles prop is passed either, so same check.
+
+  But wait - the PlatformPage route is:
+  <Route
+    path="/platform/:platformId/*"
+    element={
+      <ProtectedRoute>
+        <RequireRole>
+          <PlatformPage />
+        </RequireRole>
+      </ProtectedRoute>
+    }
+  />
+
+  And the catch-all route is:
+  <Route path="/*" element={
+    <ProtectedRoute>
+      <RequireRole>
+        <ConsoleLayout />
+      </RequireRole>
+    </ProtectedRoute>
+  } />
+
+  The catch-all route /* would match /platform/... as well, but the more specific route is defined first, so it should take precedence.
+
+  Now, the user says "when im on landing page and log in then click open console we hit access denied". The "Open Console" button probably navigates to /management or
+  /dashboard which redirects to /management.
+
+  The /management route is inside ConsoleLayout:
+  <Route path="/management" element={<ManagementPortalHome />} />
+
+  So the flow is: login -> navigate to /management -> ProtectedRoute -> RequireRole -> ConsoleLayout -> ManagementPortalHome.
+
+  The issue must be in RequireRole returning the access denied page.
+
+  Let me add some debug logging to understand what's happening. But first, let me check if there's a user_roles record for the user.
+
+  Actually, I should check the fetchUserRole function - it returns null if no role is found in the database. If the user doesn't have a user_roles record, userRole
+  would be null, and RequireRole would show the spinner (since !userRole && user is true).
+
+  But the user sees "Access Denied", not a spinner. So userRole must be non-null but not passing isConsoleRole.
+
+  Let me check what role the user actually has. I need to look at the database or add logging.
+
+  Since I can't run the app, let me think about what could cause this. One possibility: the role in the database is stored with a different case or format than
+  expected.
+
+  For example, if the database has "Control_Room_Officer" (with capital letters), the normalization toLowerCase().replace(/\s+/g, "_") would make it
+  "control_room_officer" which matches.
+
+  But what if the database has "control-room-officer" (with hyphens)? Then it would become "control-room-officer" which doesn't match "control_room_officer"
+  (underscores).
+
+  Or what if there's a trailing space? "control_room_officer " -> "control_room_officer_" which doesn't match.
+
+  Actually, the normalization only replaces spaces with underscores, not other whitespace. And it doesn't trim.
+
+  Let me check: role.toLowerCase().replace(/\s+/g, "_") - \s+ matches any whitespace (spaces, tabs, newlines) and replaces with underscore. But it doesn't trim
+  leading/trailing whitespace. So " control_room_officer" becomes "_control_room_officer" which doesn't match.
+
+  But the database enum values shouldn't have leading/trailing spaces.
+
+  Another possibility: the user has multiple roles in user_roles table, and fetchUserRole only fetches the first one (.limit(1)). If the first role is not a console
+  role but a later one is, they'd be denied.
+
+  But the user_roles table probably has a unique constraint on user_id, so only one role per user.
+
+  Let me look at the migration for user_roles... I don't have the migration files, but the CLAUDE.md says the app_role enum has those 8 values.
+
+  Actually, I think the issue might be that the user's role is "hr_custodian" which is a valid DB enum value but NOT in the CONSOLE_ROLES set. Or "administrator" which
+  IS in the set.
+
+  Wait, "administrator" is in the set at line 18. "hr_custodian" is not.
+
+  But the user says "correct role" - implying they SHOULD have access. So maybe they're an admin or manager.
+
+  Let me check if "manager" is in the set - yes, line 23: "manager".
+  "operations_manager" - line 23.
+  "admin_manager" - line 55.
+  "admin_officer" - line 56.
+
+  What about "security_manager"? Not in the set.
+  "site_manager"? Not in the set.
+
+  The user might have a role that's not in the CONSOLE_ROLES set but should be allowed.
+
+  Actually, looking at the CLAUDE.md access matrix:
+  - control role has access to control room, incidents, alarms, CCTV/bodycam
+  - hr role has full HR suite
+  - finance role has full finance
+
+  These shorthand roles ("control", "hr", "finance") ARE in the CONSOLE_ROLES set (lines 50-52).
+
+  But the actual DB enum doesn't have "control", "hr", "finance" - it has "control_room_officer", "hr_custodian", "finance_manager" etc.
+
+  So there's a mismatch: the frontend uses shorthand roles like "control", "hr", "finance" but the database uses full enum values like "control_room_officer",
+  "hr_custodian", "finance_manager".
+
+  The RequireRole component's isConsoleRole function checks against the set which includes BOTH the full enum values AND the shorthand aliases. But the fetchUserRole
+  function returns the ACTUAL database value (the enum value).
+
+  So if a user has role = 'control_room_officer' in the database, fetchUserRole returns "control_room_officer", which IS in the set (line 11). Good.
+
+  If a user has role = 'hr_custodian', it returns "hr_custodian", which is NOT in the set. Bad.
+
+  If a user has role = 'finance_manager', it returns "finance_manager", which is NOT in the set (only "finance_manager" at line 36? Let me check... line 36 is
+  "finance_manager", yes it is in the set).
+
+  Wait, line 36: "finance_manager" - yes.
+  Line 37: "finance_officer" - yes.
+  Line 38: "finance_director" - yes.
+  Line 39: "payroll_officer" - yes.
+
+  But "hr_custodian" is missing!
+  Line 34: "hr_manager" - yes.
+  Line 35: "hr_officer" - yes.
+  Line 51: "hr" - yes (shorthand).
+
+  But "hr_custodian" (the actual DB enum value) is NOT in the set.
+
+  Similarly, let me check all DB enum values against the set:
+  1. 'ceo' - line 9: YES
+  2. 'coo' - line 10: YES
+  3. 'control_room_officer' - line 11: YES
+  4. 'operations_supervisor' - line 12: YES
+  5. 'hr_custodian' - MISSING!
+  6. 'administrator' - line 18: YES
+  7. 'bdo' - line 14: YES
+  8. 'system_admin' - line 15: YES
+
+  So "hr_custodian" is the only DB enum value missing from CONSOLE_ROLES!
+
+  If the user has role "hr_custodian", they would get access denied.
+
+  But the user says "correct role" - maybe they're an HR custodian?
+
+  Actually, wait. The CLAUDE.md says the accessControl.ts defines a broader set of DesignationId strings. The RequireRole component maps DB roles to these designations.
+  But the isConsoleRole function in RequireRole.tsx doesn't use accessControl.ts - it has its own hardcoded set.
+
+  This is a bug: the CONSOLE_ROLES set in RequireRole.tsx is missing "hr_custodian" which is a valid DB role.
+
+  But that's only one role. The user might have a different role.
+
+  Let me also check: the CONSOLE_ROLES set has "admin" (line 17) and "administrator" (line 18). The DB enum has "administrator". So "administrator" works.
+
+  What about "bdo"? Line 14: YES.
+  "system_admin"? Line 15: YES.
+
+  So only "hr_custodian" is missing from the DB enum values.
+
+  But the user might have a role that's not in the DB enum but is assigned via the broader designation system. The user_roles table uses the app_role enum, so it should
+  only have those 8 values.
+
+  Unless... the user_roles table was migrated to use the broader designations? Let me check the CLAUDE.md:
+
+  "The DB app_role enum (defined in migration 01) contains the canonical roles..."
+  "The accessControl.ts file defines a broader set of DesignationId strings used by the frontend access matrix. The RequireRole component maps DB roles to these
+  designations."
+
+  But the RequireRole component doesn't seem to use accessControl.ts at all - it has its own CONSOLE_ROLES set and isConsoleRole function.
+
+  There's a disconnect: the RequireRole should probably use the accessControl.ts matrix to determine access, not a hardcoded set.
+
+  But for now, the immediate fix is to add "hr_custodian" to the CONSOLE_ROLES set.
+
+  However, the user says the issue happens "when im on landing page and log in then click open console". This suggests it's a timing/flow issue, not a missing role.
+
+  Let me re-read the RequireRole code more carefully.
+
+  if (loading) return <spinner>;
+
+  if (!user) return <Navigate to="/auth" />;
+
+  if (!userRole && user) {
+    return <spinner>;
+  }
+
+  const allowed = allowedRoles
+    ? allowedRoles.some(r => userRole?.toLowerCase() === r.toLowerCase())
+    : isConsoleRole(userRole);
+
+  useEffect(() => {
+    if (!allowed && user) {
+      logAudit(...);
+    }
+  }, [allowed, user, userRole, allowedRoles]);
+
+  if (!allowed) {
+    return <AccessDenied />;
+  }
+
+  return <>{children}</>;
+
+  The useEffect logs when !allowed. But the if (!allowed) check happens AFTER the useEffect. So the audit log would fire on the render where allowed is false.
+
+  But there's a potential issue: the useEffect runs AFTER the render. So on the first render where allowed becomes false, the effect hasn't run yet. But the if
+  (!allowed) returns the access denied page immediately.
+
+  Actually, the useEffect dependency includes allowed, so when allowed changes to false, the effect runs. But the component already returned the access denied page.
+
+  This seems fine.
+
+  But wait - what if userRole changes from null to a value, and allowed changes from false to true? The effect would run with allowed=true, so !allowed is false, no
+  audit log. Good.
+
+  What if userRole is null, allowed is false (because isConsoleRole(null) returns false), but the if (!userRole && user) check catches it and returns a spinner? In that
+  case, the if (!allowed) is never reached because the spinner is returned first.
+
+  So the access denied page is only shown when userRole is non-null but not a console role.
+
+  This confirms: the user HAS a role (userRole is not null), but it's not passing isConsoleRole.
+
+  So the fix is either:
+  1. Add the missing role(s) to CONSOLE_ROLES
+  2. Fix the role mapping to use accessControl.ts properly
+  3. Debug what role the user actually has
+
+  Since I can't debug the live app, I should:
+  1. Add "hr_custodian" to the set (it's a valid DB enum value that's missing)
+  2. Consider adding a more robust role resolution that uses the access control matrix
+  3. Add some debug logging to see what role is being fetched
+
+  But the user wants me to fix the auth issue. Let me make the minimal fix first - add the missing DB enum values to the CONSOLE_ROLES set.
+
+  Actually, let me also check if there are other DB enum values that might be missing. The CLAUDE.md lists 8 values. Let me verify each:
+
+  1. ceo - YES (line 9)
+  2. coo - YES (line 10)
+  3. control_room_officer - YES (line 11)
+  4. operations_supervisor - YES (line 12)
+  5. hr_custodian - MISSING
+  6. administrator - YES (line 18)
+  7. bdo - YES (line 14)
+  8. system_admin - YES (line 15)
+
+  Only "hr_custodian" is missing.
+
+  But wait, the comment on line 13 says: "// alias for ops_supervisor – kept for backward compatibility" and line 14 is "bdo". But "ops_supervisor" is not in the set -
+  only "operations_supervisor" is. The comment suggests "ops_supervisor" is an alias. If the database has "ops_supervisor" as a value, it wouldn't match. But the enum
+  has "operations_supervisor".
+
+  Actually, the enum might have both? No, the CLAUDE.md shows the enum as having "operations_supervisor".
+
+  Let me also check: the CONSOLE_ROLES set has "control" (line 50) which is a shorthand. If someone has role "control" in the database (not the enum), it would work.
+  But the database uses the enum.
+
+  I think the fix is to add "hr_custodian" to the set. But that might not be the user's issue.
+
+  Let me also consider: the user might be logging in, but the user_roles record doesn't exist yet (they're a new user). In that case, fetchUserRole returns null, and
+  RequireRole shows the spinner (not access denied). But the user sees access denied, so userRole is not null.
+
+  Another possibility: the fetchUserRole query fails silently (returns null on error). Looking at the code:
+  if (error) {
+    console.warn('[useAuth] role fetch error:', error.message);
+    return null;
+  }
+
+  It warns but returns null. So if there's a DB error (RLS policy, network, etc.), userRole becomes null, and the spinner shows. Not access denied.
+
+  Unless... the error happens AFTER the role was already set? No, the role is only set inside the setTimeout callback.
+
+  I think the most likely issue is that the user has a role that's not in the CONSOLE_ROLES set. Since "hr_custodian" is the only DB enum value missing, and the user
+  says "correct role", maybe they're an HR custodian.
+
+  But let me also check the accessControl.ts to see what designations map to what.
+
+  Actually, I should read the accessControl.ts file to understand the full permission system.
+
+● Read(input JSON failed to parse — 182 bytes)
+
+                                                                                                                            07:46 PM deepseek-ai/deepseek-v4-pro
+● Now I see the bug. Trace the flow:
+
+  1. User logs in on Landing page (/)
+  2. Landing renders — useAuth gets session, user set, but userRole fetch is deferred via setTimeout(0)
+  3. User clicks "Open Console" — navigates to /* → hits ProtectedRoute → RequireRole
+  4. ProtectedRoute checks isAuthenticated = !!user → true (user exists) → passes
+  5. RequireRole checks loading → false (already set) → checks user → exists → checks userRole
+
+  Root cause: loading flips to false BEFORE fetchUserRole completes. The setTimeout(0) defers the DB call, but loading gets set to false inside that same setTimeout
+  callback. However, if the onAuthStateChange event fires, sets user immediately, then the setTimeout fires — but loading might already be false from a previous session
+  check (getSession warming).
+
+  Actually, look closer at lines 56-59 and 62-67:
+
+  if (newSession?.user) {
+    setTimeout(async () => {
+      const role = await fetchUserRole(newSession.user.id);
+      setUserRole(role);
+      if (!initialised.current) {
+        initialised.current = true;
+        setLoading(false);    // loading=false only AFTER role fetched
+      }
+    }, 0);
+  } else {
+    setUserRole(null);
+    if (!initialised.current) {
+      initialised.current = true;
+      setLoading(false);      // loading=false immediately for no-user
+    }
+  }
+
+  For a user WITH session: loading stays true until fetchUserRole completes. So RequireRole should see loading=true and show spinner, not deny.
+
+  But there's also getSession() warming at line 86. It doesn't set loading, but it might trigger onAuthStateChange synchronously. If that event fires with a session →
+  user set → setTimeout → loading stays true until role fetch.
+
+  Hmm. Let me check the Landing page — maybe the "Open Console" button is clicked before loading flips false, or there's a redirect/navigation timing issue.
+
+● Read(C:\Users\user\Desktop\Alpha Pride\Hawks\src\pages\Landing.tsx · lines 1-100)
+  ⎿  Read 100 lines

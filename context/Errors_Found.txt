@@ -1,0 +1,12 @@
+
+1. on platform/ceo/m/duty-roster clicking on the button deploy unit leads to wrong route it goes to /deployment-board  instead of /courier
+
+2. also on /investigationns we get this error couldn't find table public incident timeline in the schema cache
+
+3. /assignment-hub doesn't open clicking the button for it routes to /control-room
+
+4. error on /dob error ;  column dob_entries.deleted_at does not exist on where to add new entries
+
+5. on /vistor-access error; Could not find the table 'public.visitor_passes' in the schema cache
+
+6. on /training-drills error ;Could not load drills — has the migration been applied?

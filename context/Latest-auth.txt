@@ -1,0 +1,29 @@
+URL is /platform/ceo — that's the PlatformPage route
+Role showing is exec_leadership — that's not in CONSOLE_ROLES
+React error #310 — useEffect called conditionally (my fix had // eslint-disable-next-line react-hooks/rules-of-hooks — that's a real bug)
+audit_trail RLS returning 403 — the logAudit() call is firing and failing
+
+Let me read the exact files I need:Ran 7 commandsRan 7 commandsNow I have the full picture. Three distinct problems:
+
+exec_leadership is not in the DB app_role enum — it's a fake/old role. The real DB roles are only 8: ceo, coo, control_room_officer, operations_supervisor, hr_custodian, administrator, bdo, system_admin. The user's DB role is one of these but the Landing page is sending them to /platform/ceo with selected_management_role = exec_leadership in sessionStorage — which doesn't map in designationToPlatform, causing the redirect to fail.
+React error #310 — useEffect after a conditional return in my RequireRole fix. I put // eslint-disable-next-line react-hooks/rules-of-hooks but the minified build still crashes.
+audit_trail 403 — RLS blocks the insert from the client side.
+
+Fix all three now:Ran 7 commandsRan 7 commandsNow I have everything. The full picture:
+
+The user's DB role is administrator or bdo (from the 8 canonical enum values) — when Auth.tsx does sessionStorage.setItem("selected_management_role", serverRole) it stores e.g. administrator, but that's not in ManagementRole type and not in roleRoutes → navigate(undefined) → falls to /platform/coo default
+The console shows exec_leadership — this means the user selected "Executive Leadership" from the UI role picker before login, which maps to some id not in designationToPlatform
+RequireRole React error #310 = useEffect after conditional return
+
+Three files to fix:Ran 2 commandsRan 2 commandsGood — exec_leadership is not in managementRoles. This means the user has a stale selected_management_role=exec_leadership sitting in their sessionStorage from an older version of the app. When they click "Open Console" → goes to /management → ProtectedRoute passes → RequireRole fires the audit log useEffect after a conditional return → React error #310 crashes everything.
+Now I know exactly what to fix in each file:
+
+RequireRole.tsx — move useEffect to top (fix React #310)
+Auth.tsx — map the 8 canonical DB roles (administrator, bdo, hr_custodian, operations_supervisor, control_room_officer) to valid ManagementRole routes + add exec_leadership safety fallback
+useAuth.ts — already correct, no changes needed
+Write RequireRole with all hooks at top level - fixes React error #310Write RequireRole with all hooks at top level - fixes React error #310Now fix Auth.tsx — map the canonical DB roles to valid routes, and handle stale exec_leadership in sessionStorage:Patch Auth.tsx to add canonical DB roles and exec_leadership to the route mapPatch Auth.tsx to add canonical DB roles and exec_leadership to the route mapNow also add exec_leadership to designationToPlatform in PlatformPage.tsx so the redirect check doesn't break mid-session:Add canonical DB roles and exec_leadership to designationToPlatform in PlatformPageAdd canonical DB roles and exec_leadership to designationToPlatform in PlatformPageVerify all three files look correct:Verify all three files are correctVerify all three files are correctAll clean. Package the three changed files:Ran a command, read a fileRan a command, read a file4 files. Drop them at the same paths and redeploy.
+What each fix does:
+RequireRole.tsx — Moved both useEffect calls to the top of the component before any conditional returns. This is what caused React error #310 — hooks cannot appear after an if statement that returns early. Both effects are now guarded with conditions inside them instead.
+useAuth.ts — Exposes roleLoading state so RequireRole can correctly distinguish "still fetching role from DB" vs "fetched and got null".
+Auth.tsx — Added the 8 canonical DB app_role enum values (administrator, bdo, hr_custodian, operations_supervisor, control_room_officer) to both the ManagementRole type and the roleRoutes map. Also added exec_leadership and executive_leadership as aliases mapping to /platform/ceo. Previously these fell through to undefined → navigate(undefined) which silently routed nowhere or to the wrong place.
+PlatformPage.tsx — Added the same mappings to designationToPlatform so the redirect guard inside PlatformPage doesn't misroute users who have those roles in sessionStorage mid-session.

@@ -1,0 +1,26 @@
+{
+  "name": "Black Hawk SOC-OS - Control Console",
+  "short_name": "Black Hawk SOC-OS",
+  "description": "Executive command and control system for Black Hawk SOC-OS operations across Kenya.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a1320",
+  "theme_color": "#0a1320",
+  "categories": ["business", "productivity", "security"],
+  "icons": [
+    {
+      "src": "/images/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

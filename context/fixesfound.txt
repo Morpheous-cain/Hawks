@@ -1,0 +1,47 @@
+
+1. on platform/ceo/m/duty-roster clicking on the button deploy unit leads to wrong route it goes to /deployment-board  instead of /courier
+
+2. also on /investigationns we get this error couldn't find table public incident timeline in the schema cache
+
+3. /assignment-hub doesn't open clicking the button for it routes to /control-room
+
+4. error on /dob error ;  column dob_entries.deleted_at does not exist on where to add new entries
+
+5. on /vistor-access error; Could not find the table 'public.visitor_passes' in the schema cache
+
+6. on /training-drills error ;Could not load drills — has the migration been applied?
+
+7.On /control dashboard delete Ops Dashboard because theres a functioning one on /control-room
+
+8.Same dashboard in number 7 /control-room edit form so filling the form there should option for manual input not select from list only
+
+9.Remove whole /soc-command page from /platform/ceo/m/soc-dashboard
+
+10.Research adding Waze for /strategic-advisory for sourcing data using their api and which other api to source data from
+
+11.Delete the mobile response network Alpha QRF teams dashboard area to MDT management the page is /alarms move them to /mdt-management
+
+12.Also make the whole app have a scroll function cause as of now it has issues
+
+13.Data for the /ceo/supervision-portal infomation should be sourced from control room operator/supervisor platform
+
+14./ceo/supervison-portal module shoudlnt look the same as supervisor we need to see all supervisors and the relevnt infomation not the way it is right now change
+it to be able to manage supervisors not the way the UI looks currenlty 
+
+15.on module ceo/deployment-board the create deployment post on supabase doesnt have a table that exsits yet 
+
+16.Take lovabale dev version of Access Control from loveble to production
+
+17. on /dob for operation team and field ops ob the role selection should have every role listed and have backend code wrtittens
+
+18. on /cctv on live camera tab theere should be a button to show us which site we want to look eg rama homes.ahabab,zulfa tower etc 
+
+19. on /bodycam we should be able to selct whos bodycam we want to see
+
+20. on /ceo/loss-control we should be have UI to manage the loss control officers and also data for the page is to be fed from the role/platform for loss control officer
+
+21.For /technical-secuirty it should be for management such as the /K9 page for specialized units and check that for each tab under specalized units
+
+22.Also check all forms on the app so some data fields we should be able to also input a manual option
+
+23.on /k9 w cant add dogs because supabse backend or tables dont exsist and also check which tables exisit for all modules and create the missing ones 

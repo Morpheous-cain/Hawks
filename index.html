@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Black Hawk SOC-OS — Security Operations Console</title>
+    <style>
+      /* Ensure scroll container chain is unbroken from html → body → #root */
+      html, body { height: 100%; margin: 0; padding: 0; }
+      #root { height: 100%; display: flex; flex-direction: column; }
+    </style>
+    <meta name="description" content="Executive Management Interface for Black Hawk SOC-OS - Real-time command and control system integrating CCTV, patrols, advisories, and strategic intelligence across Kenya." />
+    <meta name="author" content="Black Hawk SOC-OS" />
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#0a1320" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Black Hawk SOC-OS" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Web App Manifest (installable on Android, desktop Chrome/Edge) -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- iOS install icons (Add to Home Screen) -->
+    <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/images/app-icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/images/app-icon-512.png" />
+
+    <meta property="og:title" content="Black Hawk SOC-OS Console - Executive Command System" />
+    <meta property="og:description" content="Professional security operations center platform with real-time monitoring, strategic advisories, and national deployment management." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@BlackHawkSOCOS" />
+    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+
+    <!-- Typography: Instrument Sans (UI), Instrument Serif (display), JetBrains Mono (numbers/IDs) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital,wght@0,400;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script>
+      (function () {
+        var PURGE_KEY = 'bh_socos_pwa_purge_v5';
+        var MODULE_RELOAD_KEY = 'bh_socos_bootstrap_module_reload';
+        var MODULE_ERROR_RE = /Importing a module script failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Load failed|ChunkLoadError/i;
+
+        function purgeRuntimeCaches() {
+          var tasks = [];
+
+          if ('serviceWorker' in navigator) {
+            tasks.push(
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(regs.map(function (r) { return r.unregister(); }));
+              }).catch(function () {})
+            );
+          }
+
+          if (window.caches && caches.keys) {
+            tasks.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }).catch(function () {})
+            );
+          }
+
+          return Promise.all(tasks);
+        }
+
+        function hardReloadOnce(key) {
+          try {
+            if (sessionStorage.getItem(key) === '1') return;
+            sessionStorage.setItem(key, '1');
+          } catch (e) {}
+
+          purgeRuntimeCaches().finally(function () {
+            var url = new URL(window.location.href);
+            url.searchParams.set('_v', Date.now().toString());
+            window.location.replace(url.toString());
+          });
+        }
+
+        window.__bhRecoverModuleLoad = function () {
+          hardReloadOnce(MODULE_RELOAD_KEY);
+        };
+
+        window.addEventListener('error', function (event) {
+          var target = event && event.target;
+          if (target && target.tagName === 'SCRIPT' && target.type === 'module') {
+            hardReloadOnce(MODULE_RELOAD_KEY);
+            return;
+          }
+
+          var message = (event && (event.message || (event.error && event.error.message))) || '';
+          if (MODULE_ERROR_RE.test(String(message))) {
+            hardReloadOnce(MODULE_RELOAD_KEY);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason;
+          var message = reason && reason.message ? reason.message : String(reason || '');
+          if (MODULE_ERROR_RE.test(message)) {
+            hardReloadOnce(MODULE_RELOAD_KEY);
+          }
+        });
+
+        window.addEventListener('vite:preloadError', function (event) {
+          if (event && event.preventDefault) event.preventDefault();
+          hardReloadOnce(MODULE_RELOAD_KEY);
+        });
+
+        try {
+          var alreadyPurged = localStorage.getItem(PURGE_KEY) === '1';
+          purgeRuntimeCaches().then(function () {
+            if (!alreadyPurged && (
+              ('serviceWorker' in navigator) || (window.caches && caches.keys)
+            )) {
+              localStorage.setItem(PURGE_KEY, '1');
+              if (performance && performance.getEntriesByType) {
+                var nav = performance.getEntriesByType('navigation')[0];
+                if (!nav || nav.type !== 'reload') {
+                  location.reload();
+                }
+              } else {
+                location.reload();
+              }
+            }
+          });
+        } catch (e) {}
+      })();
+    </script>
+    <script id="app-entry" type="module" src="/src/main.tsx" onerror="window.__bhRecoverModuleLoad && window.__bhRecoverModuleLoad()"></script>
+  </body>
+</html>

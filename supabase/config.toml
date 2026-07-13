@@ -1,0 +1,31 @@
+project_id = "cfkawuhvzldkbehrcwdx"
+
+[functions.threat-analysis]
+verify_jwt = true
+
+[functions.strategic-advisory]
+verify_jwt = true
+
+[functions.generate-briefing]
+verify_jwt = true
+
+[functions.create-user-account]
+verify_jwt = true
+
+[functions.copilot-assistant]
+verify_jwt = true
+
+[functions.risk-forecast]
+verify_jwt = true
+
+[functions.public-api]
+verify_jwt = false
+
+[functions.patrol-anomaly-detection]
+verify_jwt = true
+
+[functions.evidence-sign-url]
+verify_jwt = true
+
+[functions.training-drill-inject]
+verify_jwt = true
