@@ -660,7 +660,7 @@ const Auth = () => {
   // Rank Selection Screen (FOR FIELD PORTAL)
   if (authStep === "select-rank") {
     return (
-      <div className="relative min-h-screen flex items-center justify-center bg-background p-4 overflow-hidden">
+      <div className="relative min-h-screen flex flex-col items-center justify-center bg-background p-4 overflow-y-auto">
         <div
           aria-hidden
           className="absolute inset-0 opacity-[0.15] pointer-events-none"
@@ -671,7 +671,7 @@ const Auth = () => {
             maskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
           }}
         />
-        <Card className="relative w-full max-w-3xl p-6 md:p-8 space-y-6 border-border bg-card/95 backdrop-blur-md">
+        <Card className="relative w-full max-w-3xl p-6 md:p-8 space-y-6 border-border bg-card/95 backdrop-blur-md max-h-[90vh] overflow-y-auto">
           <Button
             variant="ghost"
             size="sm"
