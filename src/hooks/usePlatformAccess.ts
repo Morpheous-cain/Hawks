@@ -13,7 +13,7 @@ const CONSOLE_ROLES = new Set([
   "compliance_officer", "system_admin", "guard_force_admin",
   "cit_manager", "courier_manager", "courier_dispatcher",
   "gm", "ops_manager", "control", "hr", "finance", "compliance",
-  "admin_manager", "admin_officer", "regional_manager", "cit_officer",
+  "admin_manager", "admin_officer", "cit_officer",
   "courier_officer",
   "customer_service_manager", "customer_service_officer",
 ]);
@@ -25,7 +25,7 @@ const FIELD_APP_ROLES = new Set([
   "escort_officer", "vip_protection", "investigator", "event_guard",
   "event_security", "event_supervisor", "rider", "driver", "rider_driver",
   "courier", "courier_officer", "cit_officer", "training_officer",
-  "operations_officer",
+  "operations_officer", "field_supervisor", // <-- Added explicitly to catch new field supervisor accounts
 ]);
 
 const CLIENT_PORTAL_ROLES = new Set(["client", "client_user", "client_admin"]);
@@ -89,7 +89,6 @@ export const usePlatformAccess = (): UsePlatformAccessResult => {
 
         if (!userRole) {
           // No role assigned — deny access rather than defaulting to console.
-          // A system admin must provision the user's role before they can log in.
           setPlatform("access-denied");
           setIsLoading(false);
           return;
@@ -97,12 +96,19 @@ export const usePlatformAccess = (): UsePlatformAccessResult => {
 
         const normalised = userRole.toLowerCase().replace(/\s+/g, "_");
 
-        if (CONSOLE_ROLES.has(normalised) || [...CONSOLE_ROLES].some(r => normalised.includes(r))) {
+        // FIX: Always prioritize strict exact matches across sets first
+        if (FIELD_APP_ROLES.has(normalised)) {
+          setPlatform("field-app");
+        } else if (CONSOLE_ROLES.has(normalised)) {
           setPlatform("console");
         } else if (CLIENT_PORTAL_ROLES.has(normalised)) {
           setPlatform("client-portal");
-        } else if (FIELD_APP_ROLES.has(normalised) || [...FIELD_APP_ROLES].some(r => normalised.includes(r))) {
+        } 
+        // Fallback: Broad substring keyword matching only if explicit exact matches fail
+        else if ([...FIELD_APP_ROLES].some(r => normalised.includes(r))) {
           setPlatform("field-app");
+        } else if ([...CONSOLE_ROLES].some(r => normalised.includes(r))) {
+          setPlatform("console");
         } else {
           // Role exists in DB but is unrecognised — deny, do not silently promote.
           setPlatform("access-denied");
@@ -124,8 +130,14 @@ export const usePlatformAccess = (): UsePlatformAccessResult => {
 export const getPlatformForRole = (role: string | null): PlatformType => {
   if (!role) return "access-denied";
   const normalised = role.toLowerCase().replace(/\s+/g, "_");
-  if (CONSOLE_ROLES.has(normalised) || [...CONSOLE_ROLES].some(r => normalised.includes(r))) return "console";
+  
+  // FIX: Apply the same exact match priority to the utility helper function
+  if (FIELD_APP_ROLES.has(normalised)) return "field-app";
+  if (CONSOLE_ROLES.has(normalised)) return "console";
   if (CLIENT_PORTAL_ROLES.has(normalised)) return "client-portal";
-  if (FIELD_APP_ROLES.has(normalised) || [...FIELD_APP_ROLES].some(r => normalised.includes(r))) return "field-app";
+  
+  if ([...FIELD_APP_ROLES].some(r => normalised.includes(r))) return "field-app";
+  if ([...CONSOLE_ROLES].some(r => normalised.includes(r))) return "console";
+  
   return "access-denied";
 };
