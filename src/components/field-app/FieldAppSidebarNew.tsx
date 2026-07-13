@@ -6,6 +6,7 @@ import {
   rankSidebarConfig,
   getRankDisplayName,
   getRankIcon,
+  isModuleVisible,
 } from "@/config/rankSidebarConfig";
 import {
   Sidebar,
@@ -45,7 +46,9 @@ export const FieldAppSidebarNew = ({
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
 
-  const modules = rankSidebarConfig[rank] || rankSidebarConfig.guard;
+  const modules = (rankSidebarConfig[rank] || rankSidebarConfig.guard).filter(
+    (m) => isModuleVisible(m.id, rank),
+  );
   const rankDisplayName = getRankDisplayName(rank);
   const RankIcon = getRankIcon(rank);
 

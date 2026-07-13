@@ -13,6 +13,21 @@ export interface RankModule {
   color: string;
 }
 
+// ponytail: only these module ids render for the guard rank. Add ids back to
+// this set (or return true unconditionally) to re-enable the rest later.
+export const GUARD_VISIBLE_MODULES = new Set<string>([
+  "clock",
+  "pre_shift_brief",
+  "welfare_check",
+  "hq_connect",
+  "field_ob",
+  "incidents",
+  "bodycam",
+]);
+
+export const isModuleVisible = (id: string, rank: string): boolean =>
+  rank === "guard" ? GUARD_VISIBLE_MODULES.has(id) : true;
+
 // Each rank has its own specific sidebar modules
 export const rankSidebarConfig: Record<string, RankModule[]> = {
   guard: [

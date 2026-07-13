@@ -8,6 +8,7 @@ import SupervisorCockpit from "./SupervisorCockpit";
 import RankCockpit from "./RankCockpit";
 import { getCockpitProfile } from "@/config/rankCockpitConfig";
 import { getRankDashboard } from "@/config/rankDashboardConfig";
+import { isModuleVisible } from "@/config/rankSidebarConfig";
 import { useFieldKpis } from "@/hooks/useFieldKpis";
 
 interface Props {
@@ -55,6 +56,8 @@ export const RankDashboard = ({
     );
   }
 
+  const visible = (acts) => acts.filter((a) => isModuleVisible(a.id, rank));
+
   return (
     <div className="space-y-5 pb-2">
       <MissionBriefHero
@@ -84,13 +87,13 @@ export const RankDashboard = ({
 
       <div className="space-y-2">
         <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Operations</p>
-        <QuickActionGrid actions={cfg.primaryActions} onSelect={onModuleSelect} />
+        <QuickActionGrid actions={visible(cfg.primaryActions)} onSelect={onModuleSelect} />
       </div>
 
       {cfg.secondaryActions.length > 0 && (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Quick Tools</p>
-          <QuickActionGrid actions={cfg.secondaryActions} onSelect={onModuleSelect} />
+          <QuickActionGrid actions={visible(cfg.secondaryActions)} onSelect={onModuleSelect} />
         </div>
       )}
 
