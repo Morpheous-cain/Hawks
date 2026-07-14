@@ -65,6 +65,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     );
 
+    // Redirect after role is settled
+    const redirectAfterAuth = () => {
+      if (userRole === "operations_supervisor" && window.location.pathname !== "/field-app") {
+        navigate("/field-app", { replace: true });
+      }
+      // Add other role-based redirections here if needed
+    };
+
+    if (!loading && userRole) {
+      redirectAfterAuth();
+    }
+
     // Trigger initial session check — errors just unblock the spinner
     supabase.auth.getSession().catch(() => {
       if (!settled.current) { settled.current = true; setLoading(false); }
