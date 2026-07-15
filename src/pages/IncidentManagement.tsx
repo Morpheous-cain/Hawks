@@ -20,6 +20,7 @@ import {
   Plus, AlertCircle, CheckCircle, Clock, ShieldAlert, AlertTriangle,
   ArrowUpCircle, MessageSquarePlus, Activity, Radio, Sparkles, FileDown, Paperclip, Upload, ListChecks,
 } from "lucide-react";
+import { RequirePermission } from "@/components/auth/RequirePermission";
 import { format } from "date-fns";
 
 import jsPDF from "jspdf";
@@ -235,9 +236,11 @@ export default function IncidentManagement() {
         <PageHeader icon={ShieldAlert} title="Incident Command Centre"
           description="Unified intake, SOP-driven response, evidence chain, AI brief and SLA tracking — single source of truth for every incident." />
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" />Report Incident</Button>
-          </DialogTrigger>
+          <RequirePermission module="ops.incidents" level="create">
+            <DialogTrigger asChild>
+              <Button><Plus className="h-4 w-4 mr-2" />Report Incident</Button>
+            </DialogTrigger>
+          </RequirePermission>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Report New Incident</DialogTitle>

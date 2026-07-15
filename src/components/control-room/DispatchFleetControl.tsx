@@ -1,12 +1,15 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Car, MapPin, Radio, Activity } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { useVehicles } from "@/hooks/useVehicles";
+import { useDispatch } from "@/hooks/useDispatch";
+import { RequirePermission } from "@/components/auth/RequirePermission";
 
 const DispatchFleetControl = () => {
-  const [vehicles, setVehicles] = useState<any[]>([]);
+  const { vehicles, isLoading, updateVehicle } = useVehicles();
+  const { createDispatchRequest, isCreatingDispatchRequest } = useDispatch();
   const [stats, setStats] = useState({
     available: 0,
     deployed: 0,
@@ -14,30 +17,17 @@ const DispatchFleetControl = () => {
     onScene: 0
   });
 
+  // Update stats when vehicles change
   useEffect(() => {
-    fetchVehicles();
-    const interval = setInterval(fetchVehicles, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchVehicles = async () => {
-    const { data } = await supabase
-      .from('vehicles')
-      .select('*')
-      .eq('is_active', true)
-      .order('callsign', { ascending: true });
-
-    if (data) {
-      setVehicles(data);
-      // Using vehicle_status or creating a default status field
+    if (vehicles) {
       setStats({
-        available: data.filter(v => v.current_assignment === null || v.current_assignment === '').length,
-        deployed: data.filter(v => v.current_assignment !== null && v.current_assignment !== '').length,
-        enRoute: 0, // Would need status tracking
-        onScene: 0  // Would need status tracking
+        available: vehicles.filter(v => !v.current_assignment || v.current_assignment === '').length,
+        deployed: vehicles.filter(v => v.current_assignment && v.current_assignment !== '').length,
+        enRoute: 0,
+        onScene: 0
       });
     }
-  };
+  }, [vehicles]);
 
   const getVehicleStatus = (vehicle: any) => {
     if (!vehicle.current_assignment || vehicle.current_assignment === '') {
@@ -63,6 +53,44 @@ const DispatchFleetControl = () => {
       case 'on_scene': return <MapPin className="w-4 h-4" />;
       default: return <Car className="w-4 h-4" />;
     }
+  };
+
+  const handleDispatch = async (vehicle: any) => {
+    const dispatchNumber = `DSP-${Date.now().toString(36).toUpperCase()}`;
+    try {
+      await createDispatchRequest({
+        request_number: dispatchNumber,
+        description: `Dispatch ${vehicle.call_sign || vehicle.registration_number}`,
+        location: vehicle.last_gps_lat && vehicle.last_gps_lng
+          ? `${vehicle.last_gps_lat},${vehicle.last_gps_lng}`
+          : "Unknown",
+        dispatch_type: "vehicle",
+        priority: "medium" as any,
+        requested_by: "", // Will be filled by backend or useAuth
+        ticket_id: "",   // Placeholder — wire to an incident/alarm context
+        assigned_unit: vehicle.id,
+      });
+      // Mark vehicle as dispatched
+      await updateVehicle({ id: vehicle.id, current_assignment: dispatchNumber });
+    } catch (err) {
+      console.error("Dispatch failed:", err);
+    }
+  };
+
+  const handleTrack = (vehicle: any) => {
+    if (vehicle.last_gps_lat && vehicle.last_gps_lng) {
+      window.open(
+        `https://www.google.com/maps?q=${vehicle.last_gps_lat},${vehicle.last_gps_lng}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    }
+  };
+
+  const handleContact = (vehicle: any) => {
+    // ponytail: replace with real contact info — vehicle.crew_mobile or similar
+    const msg = `Unit: ${vehicle.call_sign || vehicle.registration_number}`;
+    alert(`Contact dispatch for ${msg}`);
   };
 
   return (
@@ -161,13 +189,21 @@ const DispatchFleetControl = () => {
                 )}
 
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="text-xs">
+                  <Button size="sm" variant="outline" className="text-xs" onClick={() => handleTrack(vehicle)}>
                     Track
                   </Button>
-                  <Button size="sm" variant="outline" className="text-xs">
-                    Dispatch
-                  </Button>
-                  <Button size="sm" variant="outline" className="text-xs">
+                  <RequirePermission module="ops.dispatch" level="edit">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                      disabled={isCreatingDispatchRequest || !!vehicle.current_assignment}
+                      onClick={() => handleDispatch(vehicle)}
+                    >
+                      {isCreatingDispatchRequest && !vehicle.current_assignment ? "Dispatching..." : "Dispatch"}
+                    </Button>
+                  </RequirePermission>
+                  <Button size="sm" variant="outline" className="text-xs" onClick={() => handleContact(vehicle)}>
                     Contact
                   </Button>
                 </div>

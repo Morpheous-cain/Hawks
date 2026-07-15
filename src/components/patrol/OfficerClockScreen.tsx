@@ -11,10 +11,11 @@ import { format } from "date-fns";
 import { validateGuardLocation, isWithinGeofence } from "@/utils/geofenceValidation";
 import SelfieCapture from "@/components/patrol/SelfieCapture";
 import useBiometricAuth from "@/hooks/useBiometricAuth";
+import { useAuth } from "@/hooks/useAuth";
+import { useOfficerAssignments } from "@/hooks/useOfficerAssignments";
 
 interface OfficerClockScreenProps {
-  officerId?: string;
-  siteId?: string;
+  // officerId and siteId are now derived from auth context
 }
 
 interface NonceData {
@@ -51,7 +52,11 @@ interface Site {
   geofenceRadius?: number;
 }
 
-const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
+const OfficerClockScreen = () => {
+  const { user } = useAuth();
+  const { staffRecord, assignedSites, isLoading: assignmentsLoading } = useOfficerAssignments();
+  const officerId = staffRecord?.id;
+  const officerName = staffRecord?.full_name;
   const [scanning, setScanning] = useState(false);
   const [nonce, setNonce] = useState<NonceData | null>(null);
   const [ttlRemaining, setTtlRemaining] = useState(30);
@@ -60,11 +65,9 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
   const [wifiStatus, setWifiStatus] = useState<'unknown' | 'verified' | 'unavailable'>('unknown');
   const [lastClockEvent, setLastClockEvent] = useState<{ type: string; time: string; status: string } | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [selectedSite, setSelectedSite] = useState<string>(siteId || '');
-  const [selectedOfficer, setSelectedOfficer] = useState<string>(officerId || '');
+  const [selectedSite, setSelectedSite] = useState<string>('');
   const [clockHistory, setClockHistory] = useState<ClockHistory[]>([]);
   const [currentShiftStatus, setCurrentShiftStatus] = useState<'off' | 'clocked_in' | 'on_break'>('off');
-  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [geofenceStatus, setGeofenceStatus] = useState<{
     status: 'checking' | 'valid' | 'invalid' | 'no-geofence';
@@ -72,7 +75,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
     distance?: number;
   }>({ status: 'no-geofence', message: 'Select a site to validate geofence' });
   const videoRef = useRef<HTMLVideoElement>(null);
-  
+
   // Anti-fraud verification state
   const [selfieRequired, setSelfieRequired] = useState(false);
   const [selfieImage, setSelfieImage] = useState<string | null>(null);
@@ -102,30 +105,23 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
     }
   }, [nonce, ttlRemaining]);
 
-  // Load staff, sites, GPS and history on mount
+  // Load sites, GPS and history on mount
   useEffect(() => {
-    fetchStaffMembers();
-    fetchSites();
-    checkGPSLocation();
-    fetchClockHistory();
-    checkCurrentShiftStatus();
-  }, []);
-
-  const fetchStaffMembers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('staff')
-        .select('id, staff_id, full_name, position, current_site, status')
-        .eq('status', 'active')
-        .order('full_name');
-      
-      if (!error && data) {
-        setStaffMembers(data);
-      }
-    } catch (error) {
-      console.error("Error fetching staff:", error);
+    if (assignmentsLoading) return;
+    if (officerId) {
+      fetchSites();
+      checkGPSLocation();
+      fetchClockHistory();
+      checkCurrentShiftStatus();
     }
-  };
+  }, [assignmentsLoading, officerId]);
+
+  // Initialize selected site from assigned sites
+  useEffect(() => {
+    if (assignedSites.length > 0 && !selectedSite) {
+      setSelectedSite(assignedSites[0].id);
+    }
+  }, [assignedSites, selectedSite]);
 
   const fetchSites = async () => {
     try {
@@ -133,7 +129,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
       const { data, error } = await supabase
         .from('sites')
         .select(`
-          id, 
+          id,
           site_name,
           client_id,
           clients (
@@ -145,10 +141,10 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
           )
         `)
         .order('site_name');
-      
+
       if (!error && data) {
-        setSites(data.map((s: any) => ({ 
-          id: s.id, 
+        setSites(data.map((s: any) => ({
+          id: s.id,
           name: s.site_name,
           clientId: s.client_id,
           clientName: s.clients?.legal_name || null,
@@ -181,8 +177,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
 
   const checkCurrentShiftStatus = async () => {
     try {
-      const staffId = selectedOfficer || officerId;
-      if (!staffId) return;
+      if (!officerId) return;
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -190,7 +185,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
       const { data } = await supabase
         .from('attendance')
         .select('*')
-        .eq('staff_id', staffId)
+        .eq('staff_id', officerId)
         .gte('check_in', today.toISOString())
         .order('check_in', { ascending: false })
         .limit(1);
@@ -355,13 +350,13 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
         toast.error("Please select a site first");
         return;
       }
-      if (!selectedOfficer) {
-        toast.error("Please select an officer first");
+      if (!officerId) {
+        toast.error("Officer not identified");
         return;
       }
     } else {
-      if (!selectedOfficer) {
-        toast.error("Please select an officer first");
+      if (!officerId) {
+        toast.error("Officer not identified");
         return;
       }
     }
@@ -379,7 +374,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
 
     // Now request biometric if supported
     if (biometricSupported) {
-      const result = await requestBiometric(selectedOfficer || 'unknown');
+      const result = await requestBiometric(officerId || 'unknown');
       if (result.verified) {
         setBiometricVerified(true);
         toast.success("Biometric verified — proceeding with clock action");
@@ -419,13 +414,12 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
   const executeClockIn = async (selfieData: string, biometricPassed: boolean) => {
     setProcessing(true);
     try {
-      const officer = staffMembers.find(s => s.id === selectedOfficer);
       const siteName = sites.find(s => s.id === selectedSite)?.name || selectedSite;
 
       const verificationNotes = [
         `GPS: ${gpsCoords?.lat.toFixed(6)}, ${gpsCoords?.lng.toFixed(6)}`,
         `Accuracy: ${gpsCoords?.accuracy.toFixed(0)}m`,
-        `Officer: ${officer?.full_name}`,
+        `Officer: ${officerName}`,
         `Selfie: captured`,
         `Biometric: ${biometricPassed ? 'verified' : biometricSupported ? 'failed' : 'not_available'}`,
       ].join(' | ');
@@ -433,7 +427,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
       const { data, error } = await supabase
         .from('attendance')
         .insert({
-          staff_id: selectedOfficer,
+          staff_id: officerId,
           check_in: new Date().toISOString(),
           site: siteName,
           status: 'verified',
@@ -452,7 +446,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
       });
       setCurrentShiftStatus('clocked_in');
       await fetchClockHistory();
-      toast.success(`Clock-IN Verified — ${officer?.full_name} at ${siteName}. Time: ${new Date().toLocaleTimeString()}`);
+      toast.success(`Clock-IN Verified — ${officerName} at ${siteName}. Time: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       console.error("Clock-in error:", error);
       toast.error("Check-in rejected — Please request manual verification");
@@ -464,12 +458,10 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
   const executeClockOut = async (selfieData: string, biometricPassed: boolean) => {
     setProcessing(true);
     try {
-      const officer = staffMembers.find(s => s.id === selectedOfficer);
-
       const { data: latestAttendance, error: fetchError } = await supabase
         .from('attendance')
         .select('*')
-        .eq('staff_id', selectedOfficer)
+        .eq('staff_id', officerId)
         .is('check_out', null)
         .order('check_in', { ascending: false })
         .limit(1)
@@ -504,7 +496,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
       });
       setCurrentShiftStatus('off');
       await fetchClockHistory();
-      toast.success(`Clock-OUT Verified — ${officer?.full_name}. Time: ${new Date().toLocaleTimeString()}`);
+      toast.success(`Clock-OUT Verified — ${officerName}. Time: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       console.error("Clock-out error:", error);
       toast.error("Clock-out failed — Please request manual verification");
@@ -517,13 +509,6 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
     setScanning(true);
     requestNonce();
   };
-
-  // Update shift status when officer changes
-  useEffect(() => {
-    if (selectedOfficer) {
-      checkCurrentShiftStatus();
-    }
-  }, [selectedOfficer]);
 
   // Re-validate geofence when site changes
   useEffect(() => {
@@ -570,23 +555,15 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
         <CardContent className="pt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="officer">Select Officer</Label>
-              <Select value={selectedOfficer} onValueChange={setSelectedOfficer}>
-                <SelectTrigger id="officer" className="mt-1">
-                  <SelectValue placeholder="Choose officer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {staffMembers.map(staff => (
-                    <SelectItem key={staff.id} value={staff.id}>
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4" />
-                        <span>{staff.full_name}</span>
-                        <Badge variant="outline" className="text-xs ml-2">{staff.position}</Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="officer">Officer</Label>
+              <div className="mt-1 p-3 bg-muted/30 rounded-lg border border-muted/20 flex items-center gap-3">
+                <User className="h-5 w-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <p className="font-medium">{officerName || 'Unknown Officer'}</p>
+                  <p className="text-xs text-muted-foreground">{staffRecord?.position || 'Guard'}</p>
+                </div>
+                <Badge variant="outline" className="text-xs">{staffRecord?.staff_id || '—'}</Badge>
+              </div>
             </div>
             <div className="flex gap-2 items-end">
               <div className="flex-1">
@@ -716,7 +693,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
         <SelfieCapture
           onCapture={handleSelfieCapture}
           onCancel={handleSelfieCancelled}
-          officerName={staffMembers.find(s => s.id === selectedOfficer)?.full_name}
+          officerName={officerName}
         />
       )}
 
@@ -771,7 +748,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
           size="lg"
           className="h-16 text-lg bg-green-600 hover:bg-green-700 disabled:opacity-50"
           onClick={() => initiateClockAction('clock_in')}
-          disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !selectedOfficer || currentShiftStatus === 'clocked_in'}
+          disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !officerId || currentShiftStatus === 'clocked_in'}
         >
           <CheckCircle className="h-6 w-6 mr-2" />
           Clock IN
@@ -781,7 +758,7 @@ const OfficerClockScreen = ({ officerId, siteId }: OfficerClockScreenProps) => {
           variant="outline"
           className="h-16 text-lg border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
           onClick={() => initiateClockAction('clock_out')}
-          disabled={processing || selfieRequired || biometricVerifying || !selectedOfficer || currentShiftStatus !== 'clocked_in'}
+          disabled={processing || selfieRequired || biometricVerifying || !officerId || currentShiftStatus !== 'clocked_in'}
         >
           <XCircle className="h-6 w-6 mr-2" />
           Clock OUT

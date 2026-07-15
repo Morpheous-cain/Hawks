@@ -17,6 +17,7 @@ import { exportToCSV } from "@/utils/exportData";
 import { logAudit } from "@/utils/auditLog";
 import { ClientCreateDialog } from "@/components/client/ClientCreateDialog";
 import { ClientDetailDialog } from "@/components/client/ClientDetailDialog";
+import { RequirePermission } from "@/components/auth/RequirePermission";
 
 const ClientManagement = () => {
   const navigate = useNavigate();
@@ -190,13 +191,15 @@ const ClientManagement = () => {
               <Download className="w-4 h-4" />
               Export
             </Button>
-            <Button 
-              className="gap-2 bg-gradient-command w-full md:w-auto"
-              onClick={() => setShowCreateDialog(true)}
-            >
-              <Plus className="w-4 h-4" />
-              New Client
-            </Button>
+            <RequirePermission module="client.management" level="create">
+              <Button
+                className="gap-2 bg-gradient-command w-full md:w-auto"
+                onClick={() => setShowCreateDialog(true)}
+              >
+                <Plus className="w-4 h-4" />
+                New Client
+              </Button>
+            </RequirePermission>
           </div>
         </div>
       </Card>
