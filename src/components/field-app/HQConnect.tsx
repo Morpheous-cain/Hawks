@@ -45,12 +45,106 @@ const PRIORITY_COLORS: Record<string, string> = {
   critical: "bg-red-600 animate-pulse",
 };
 
+// Type interfaces for HQ tables (until types.ts regenerates)
+interface HQMessage {
+  id: string;
+  sender_id: string;
+  recipient_id: string | null;
+  thread_key: string;
+  body: string | null;
+  message_type: 'text' | 'voice' | 'ptt' | 'system' | 'call_log';
+  audio_url: string | null;
+  duration_seconds: number | null;
+  site_id: string | null;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  is_from_hq: boolean;
+  read_at: string | null;
+  created_at: string;
+}
+
+interface GuardStatusBeacon {
+  user_id: string;
+  staff_id: string | null;
+  status: StatusType;
+  status_message: string | null;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  site_id: string | null;
+  battery_level: number | null;
+  last_heartbeat: string;
+  updated_at: string;
+}
+
+interface HQBroadcast {
+  id: string;
+  title: string;
+  body: string;
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  audience: string;
+  requires_ack: boolean;
+  expires_at: string | null;
+  issued_by: string | null;
+  issued_at: string;
+}
+
+interface HQBroadcastAck {
+  id: string;
+  broadcast_id: string;
+  user_id: string;
+  acknowledged_at: string;
+  gps_lat: number | null;
+  gps_lng: number | null;
+}
+
+interface HQDirective {
+  id: string;
+  directive_number: string | null;
+  title: string;
+  instructions: string;
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  assigned_to: string;
+  issued_by: string | null;
+  status: 'pending' | 'acknowledged' | 'executing' | 'completed' | 'escalated' | 'cancelled';
+  acknowledged_at: string | null;
+  executing_at: string | null;
+  completed_at: string | null;
+  ack_gps_lat: number | null;
+  ack_gps_lng: number | null;
+  completion_gps_lat: number | null;
+  completion_gps_lng: number | null;
+  completion_notes: string | null;
+  escalated_to: string | null;
+  sla_minutes: number;
+  created_at: string;
+}
+
+interface HQBackupRequest {
+  id: string;
+  request_number: string | null;
+  requested_by: string;
+  reason: string;
+  threat_level: 'low' | 'medium' | 'high' | 'critical';
+  units_requested: number;
+  site_id: string | null;
+  location: string | null;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  status: 'pending' | 'dispatched' | 'arrived' | 'resolved' | 'cancelled';
+  dispatched_unit: string | null;
+  dispatched_at: string | null;
+  arrived_at: string | null;
+  resolved_at: string | null;
+  sla_minutes: number;
+  created_at: string;
+}
+
 const HQConnect = () => {
   const [userId, setUserId] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
 
   // Chat
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<HQMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -65,17 +159,17 @@ const HQConnect = () => {
   const [statusMessage, setStatusMessage] = useState("");
 
   // Broadcasts
-  const [broadcasts, setBroadcasts] = useState<any[]>([]);
+  const [broadcasts, setBroadcasts] = useState<HQBroadcast[]>([]);
   const [acks, setAcks] = useState<Set<string>>(new Set());
 
   // Directives
-  const [directives, setDirectives] = useState<any[]>([]);
+  const [directives, setDirectives] = useState<HQDirective[]>([]);
 
   // Backup
   const [backupOpen, setBackupOpen] = useState(false);
   const [backupReason, setBackupReason] = useState("");
   const [backupThreat, setBackupThreat] = useState<"low" | "medium" | "high" | "critical">("medium");
-  const [backupRequests, setBackupRequests] = useState<any[]>([]);
+  const [backupRequests, setBackupRequests] = useState<HQBackupRequest[]>([]);
 
   const threadKey = useMemo(() => (userId ? `guard:${userId}` : ""), [userId]);
 
@@ -94,16 +188,16 @@ const HQConnect = () => {
 
     const loadAll = async () => {
       const [msgs, brc, ackList, drs, bks, beacon] = await Promise.all([
-        (supabase as any).from("hq_messages").select("*").eq("thread_key", `guard:${userId}`).order("created_at"),
-        (supabase as any).from("hq_broadcasts").select("*").order("issued_at", { ascending: false }).limit(50),
-        (supabase as any).from("hq_broadcast_acks").select("broadcast_id").eq("user_id", userId),
-        (supabase as any).from("hq_directives").select("*").eq("assigned_to", userId).order("created_at", { ascending: false }).limit(50),
-        (supabase as any).from("hq_backup_requests").select("*").eq("requested_by", userId).order("created_at", { ascending: false }).limit(20),
-        (supabase as any).from("guard_status_beacons").select("*").eq("user_id", userId).maybeSingle(),
+        supabase.from("hq_messages").select("*").eq("thread_key", `guard:${userId}`).order("created_at"),
+        supabase.from("hq_broadcasts").select("*").order("issued_at", { ascending: false }).limit(50),
+        supabase.from("hq_broadcast_acks").select("broadcast_id").eq("user_id", userId),
+        supabase.from("hq_directives").select("*").eq("assigned_to", userId).order("created_at", { ascending: false }).limit(50),
+        supabase.from("hq_backup_requests").select("*").eq("requested_by", userId).order("created_at", { ascending: false }).limit(20),
+        supabase.from("guard_status_beacons").select("*").eq("user_id", userId).maybeSingle(),
       ]);
       if (msgs.data) setMessages(msgs.data);
       if (brc.data) setBroadcasts(brc.data);
-      if (ackList.data) setAcks(new Set(ackList.data.map((a: any) => a.broadcast_id)));
+      if (ackList.data) setAcks(new Set(ackList.data.map((a) => a.broadcast_id)));
       if (drs.data) setDirectives(drs.data);
       if (bks.data) setBackupRequests(bks.data);
       if (beacon.data) {
@@ -111,7 +205,7 @@ const HQConnect = () => {
         setStatusMessage(beacon.data.status_message || "");
       } else {
         // create initial beacon
-        await (supabase as any).from("guard_status_beacons").upsert({ user_id: userId, status: "available" });
+        await supabase.from("guard_status_beacons").upsert({ user_id: userId, status: "available" });
       }
     };
     loadAll();
@@ -161,7 +255,7 @@ const HQConnect = () => {
           navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
         coords = { gps_lat: pos.coords.latitude, gps_lng: pos.coords.longitude };
       } catch {}
-      await (supabase as any).from("guard_status_beacons").upsert({
+      await supabase.from("guard_status_beacons").upsert({
         user_id: userId,
         status,
         status_message: statusMessage || null,
@@ -186,7 +280,7 @@ const HQConnect = () => {
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 3000 }));
       coords = { gps_lat: pos.coords.latitude, gps_lng: pos.coords.longitude };
     } catch {}
-    const { error } = await (supabase as any).from("hq_messages").insert({
+    const { error } = await supabase.from("hq_messages").insert({
       sender_id: userId,
       thread_key: threadKey,
       body,
@@ -210,7 +304,7 @@ const HQConnect = () => {
         stream.getTracks().forEach((t) => t.stop());
         if (!userId) return;
         // Note: audio upload to storage would happen here. For now we log a PTT entry.
-        await (supabase as any).from("hq_messages").insert({
+        await supabase.from("hq_messages").insert({
           sender_id: userId,
           thread_key: threadKey,
           body: `[PTT voice burst · ${dur}s]`,
@@ -235,7 +329,7 @@ const HQConnect = () => {
   // Direct cellular call to HQ (uses tel: protocol via cellular eSIM)
   const callHQ = async () => {
     if (!userId) return;
-    await (supabase as any).from("hq_messages").insert({
+    await supabase.from("hq_messages").insert({
       sender_id: userId,
       thread_key: threadKey,
       body: `[Cellular call placed to HQ ${HQ_PHONE_NUMBER}]`,
@@ -254,7 +348,7 @@ const HQConnect = () => {
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 3000 }));
       coords = { gps_lat: pos.coords.latitude, gps_lng: pos.coords.longitude };
     } catch {}
-    const { error } = await (supabase as any).from("hq_broadcast_acks").insert({
+    const { error } = await supabase.from("hq_broadcast_acks").insert({
       broadcast_id: broadcastId, user_id: userId, ...coords,
     });
     if (error) toast.error("Acknowledgement failed");
@@ -285,7 +379,7 @@ const HQConnect = () => {
       updates.completion_gps_lng = coords.lng;
       if (notes) updates.completion_notes = notes;
     }
-    const { error } = await (supabase as any).from("hq_directives").update(updates).eq("id", id);
+    const { error } = await supabase.from("hq_directives").update(updates).eq("id", id);
     if (error) toast.error("Failed to update directive");
     else toast.success(`Directive ${next}`);
   };
@@ -299,7 +393,7 @@ const HQConnect = () => {
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
       coords = { gps_lat: pos.coords.latitude, gps_lng: pos.coords.longitude };
     } catch {}
-    const { error } = await (supabase as any).from("hq_backup_requests").insert({
+    const { error } = await supabase.from("hq_backup_requests").insert({
       requested_by: userId,
       reason: backupReason,
       threat_level: backupThreat,

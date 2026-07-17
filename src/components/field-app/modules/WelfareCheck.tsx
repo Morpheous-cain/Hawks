@@ -7,9 +7,24 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useOfficerAssignments } from "@/hooks/useOfficerAssignments";
 
+interface WelfareHeartbeat {
+  id: string;
+  staff_id: string;
+  status: string;
+  interval_minutes: number;
+  next_due_at: string;
+  last_check_at: string;
+  missed_count: number;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export const WelfareCheck = () => {
   const { staffRecord } = useOfficerAssignments();
-  const [latest, setLatest] = useState<any>(null);
+  const [latest, setLatest] = useState<WelfareHeartbeat | null>(null);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -19,7 +34,7 @@ export const WelfareCheck = () => {
 
   const load = async () => {
     if (!staffRecord?.id) return;
-    const { data } = await (supabase as any)
+    const { data } = await supabase
       .from("welfare_heartbeats")
       .select("*")
       .eq("staff_id", staffRecord.id)
@@ -33,7 +48,7 @@ export const WelfareCheck = () => {
   const checkIn = async () => {
     if (!staffRecord?.id) return toast.error("Staff record required");
     const next = new Date(Date.now() + 30 * 60_000);
-    const { error } = await (supabase as any).from("welfare_heartbeats").insert({
+    const { error } = await supabase.from("welfare_heartbeats").insert({
       staff_id: staffRecord.id, status: "ok", interval_minutes: 30,
       next_due_at: next.toISOString(), last_check_at: new Date().toISOString(),
     });

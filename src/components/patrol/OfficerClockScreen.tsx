@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { QrCode, MapPin, Wifi, Radio, Camera, Clock, CheckCircle, XCircle, AlertTriangle, RefreshCw, User, Building, Fingerprint, ShieldCheck } from "lucide-react";
+import { QrCode, MapPin, Wifi, Radio, Camera, Clock, CheckCircle, XCircle, AlertTriangle, RefreshCw, User, Building, Fingerprint, ShieldCheck, Sun, Moon, Coffee } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ interface ClockHistory {
   site: string;
   status: 'verified' | 'pending' | 'rejected';
   officerName?: string;
+  shiftType?: 'day' | 'night';
 }
 
 interface StaffMember {
@@ -68,6 +69,7 @@ const OfficerClockScreen = () => {
   const [selectedSite, setSelectedSite] = useState<string>('');
   const [clockHistory, setClockHistory] = useState<ClockHistory[]>([]);
   const [currentShiftStatus, setCurrentShiftStatus] = useState<'off' | 'clocked_in' | 'on_break'>('off');
+  const [currentShiftType, setCurrentShiftType] = useState<'day' | 'night'>('day');
   const [sites, setSites] = useState<Site[]>([]);
   const [geofenceStatus, setGeofenceStatus] = useState<{
     status: 'checking' | 'valid' | 'invalid' | 'no-geofence';
@@ -193,7 +195,12 @@ const OfficerClockScreen = () => {
       if (data && data.length > 0) {
         const latest = data[0];
         if (!latest.check_out) {
-          setCurrentShiftStatus('clocked_in');
+          if (latest.break_start && !latest.break_end) {
+            setCurrentShiftStatus('on_break');
+          } else {
+            setCurrentShiftStatus('clocked_in');
+          }
+          setCurrentShiftType(latest.shift_type as 'day' | 'night');
         } else {
           setCurrentShiftStatus('off');
         }
@@ -232,8 +239,31 @@ const OfficerClockScreen = () => {
             time: record.check_in,
             site: record.site,
             status: record.status as 'verified' | 'pending' | 'rejected' || 'pending',
-            officerName: staffName
+            officerName: staffName,
+            shiftType: record.shift_type as 'day' | 'night'
           });
+          if (record.break_start && !record.break_end) {
+            history.push({
+              id: `${record.id}-break-start`,
+              type: 'BREAK_START',
+              time: record.break_start,
+              site: record.site,
+              status: 'verified',
+              officerName: staffName,
+              shiftType: record.shift_type as 'day' | 'night'
+            });
+          }
+          if (record.break_end) {
+            history.push({
+              id: `${record.id}-break-end`,
+              type: 'BREAK_END',
+              time: record.break_end,
+              site: record.site,
+              status: 'verified',
+              officerName: staffName,
+              shiftType: record.shift_type as 'day' | 'night'
+            });
+          }
           if (record.check_out) {
             history.push({
               id: `${record.id}-out`,
@@ -241,7 +271,8 @@ const OfficerClockScreen = () => {
               time: record.check_out,
               site: record.site,
               status: 'verified',
-              officerName: staffName
+              officerName: staffName,
+              shiftType: record.shift_type as 'day' | 'night'
             });
           }
         });
@@ -340,8 +371,8 @@ const OfficerClockScreen = () => {
   };
 
   // Initiate clock action — requires selfie + biometric first
-  const initiateClockAction = (action: 'clock_in' | 'clock_out') => {
-    if (action === 'clock_in') {
+  const initiateClockAction = (action: 'clock_in' | 'clock_out' | 'break_start' | 'break_end') => {
+    if (action === 'clock_in' || action === 'break_start' || action === 'break_end') {
       if (gpsStatus !== 'verified') {
         toast.error("GPS verification required. Please ensure you are within the site geofence.");
         return;
@@ -354,7 +385,7 @@ const OfficerClockScreen = () => {
         toast.error("Officer not identified");
         return;
       }
-    } else {
+    } else if (action === 'clock_out') {
       if (!officerId) {
         toast.error("Officer not identified");
         return;
@@ -381,6 +412,10 @@ const OfficerClockScreen = () => {
         // Execute the pending action
         if (pendingAction === 'clock_in') {
           await executeClockIn(imageDataUrl, true);
+        } else if (pendingAction === 'break_start') {
+          await executeBreakStart(imageDataUrl, true);
+        } else if (pendingAction === 'break_end') {
+          await executeBreakEnd(imageDataUrl, true);
         } else {
           await executeClockOut(imageDataUrl, true);
         }
@@ -389,6 +424,10 @@ const OfficerClockScreen = () => {
         // Still allow clock action but flag it as unverified biometric
         if (pendingAction === 'clock_in') {
           await executeClockIn(imageDataUrl, false);
+        } else if (pendingAction === 'break_start') {
+          await executeBreakStart(imageDataUrl, false);
+        } else if (pendingAction === 'break_end') {
+          await executeBreakEnd(imageDataUrl, false);
         } else {
           await executeClockOut(imageDataUrl, false);
         }
@@ -398,6 +437,10 @@ const OfficerClockScreen = () => {
       toast.info("Biometric not available on this device — selfie verification only");
       if (pendingAction === 'clock_in') {
         await executeClockIn(imageDataUrl, false);
+      } else if (pendingAction === 'break_start') {
+        await executeBreakStart(imageDataUrl, false);
+      } else if (pendingAction === 'break_end') {
+        await executeBreakEnd(imageDataUrl, false);
       } else {
         await executeClockOut(imageDataUrl, false);
       }
@@ -431,7 +474,7 @@ const OfficerClockScreen = () => {
           check_in: new Date().toISOString(),
           site: siteName,
           status: 'verified',
-          shift_type: 'day',
+          shift_type: currentShiftType,
           notes: verificationNotes
         })
         .select()
@@ -446,10 +489,110 @@ const OfficerClockScreen = () => {
       });
       setCurrentShiftStatus('clocked_in');
       await fetchClockHistory();
-      toast.success(`Clock-IN Verified — ${officerName} at ${siteName}. Time: ${new Date().toLocaleTimeString()}`);
+      toast.success(`Clock-IN Verified — ${officerName} at ${siteName} (${currentShiftType} shift). Time: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       console.error("Clock-in error:", error);
       toast.error("Check-in rejected — Please request manual verification");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const executeBreakStart = async (selfieData: string, biometricPassed: boolean) => {
+    setProcessing(true);
+    try {
+      const { data: latestAttendance, error: fetchError } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('staff_id', officerId)
+        .is('check_out', null)
+        .order('check_in', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (fetchError || !latestAttendance) {
+        toast.error("No active check-in found");
+        return;
+      }
+
+      const breakNotes = [
+        latestAttendance.notes || '',
+        `Break start GPS: ${gpsCoords?.lat?.toFixed(6) || 'N/A'}, ${gpsCoords?.lng?.toFixed(6) || 'N/A'}`,
+        `Selfie: captured`,
+        `Biometric: ${biometricPassed ? 'verified' : biometricSupported ? 'failed' : 'not_available'}`,
+      ].join(' | ');
+
+      const { error } = await supabase
+        .from('attendance')
+        .update({
+          break_start: new Date().toISOString(),
+          notes: breakNotes
+        })
+        .eq('id', latestAttendance.id);
+
+      if (error) throw error;
+
+      setLastClockEvent({
+        type: 'BREAK_START',
+        time: new Date().toLocaleTimeString(),
+        status: 'VERIFIED'
+      });
+      setCurrentShiftStatus('on_break');
+      await fetchClockHistory();
+      toast.success(`Break started — ${officerName}. Time: ${new Date().toLocaleTimeString()}`);
+    } catch (error) {
+      console.error("Break start error:", error);
+      toast.error("Break start failed — Please request manual verification");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const executeBreakEnd = async (selfieData: string, biometricPassed: boolean) => {
+    setProcessing(true);
+    try {
+      const { data: latestAttendance, error: fetchError } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('staff_id', officerId)
+        .is('check_out', null)
+        .order('check_in', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (fetchError || !latestAttendance) {
+        toast.error("No active check-in found");
+        return;
+      }
+
+      const breakNotes = [
+        latestAttendance.notes || '',
+        `Break end GPS: ${gpsCoords?.lat?.toFixed(6) || 'N/A'}, ${gpsCoords?.lng?.toFixed(6) || 'N/A'}`,
+        `Selfie: captured`,
+        `Biometric: ${biometricPassed ? 'verified' : biometricSupported ? 'failed' : 'not_available'}`,
+      ].join(' | ');
+
+      const { error } = await supabase
+        .from('attendance')
+        .update({
+          break_end: new Date().toISOString(),
+          notes: breakNotes
+        })
+        .eq('id', latestAttendance.id);
+
+      if (error) throw error;
+
+      setLastClockEvent({
+        type: 'BREAK_END',
+        time: new Date().toLocaleTimeString(),
+        status: 'VERIFIED'
+      });
+      setCurrentShiftStatus('clocked_in');
+      await fetchClockHistory();
+      toast.success(`Break ended — ${officerName}. Time: ${new Date().toLocaleTimeString()}`);
+    } catch (error) {
+      console.error("Break end error:", error);
+      toast.error("Break end failed — Please request manual verification");
     } finally {
       setProcessing(false);
     }
@@ -743,26 +886,89 @@ const OfficerClockScreen = () => {
       )}
 
       {/* Clock Actions */}
-      <div className="grid grid-cols-2 gap-4">
-        <Button
-          size="lg"
-          className="h-16 text-lg bg-green-600 hover:bg-green-700 disabled:opacity-50"
-          onClick={() => initiateClockAction('clock_in')}
-          disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !officerId || currentShiftStatus === 'clocked_in'}
-        >
-          <CheckCircle className="h-6 w-6 mr-2" />
-          Clock IN
-        </Button>
-        <Button
-          size="lg"
-          variant="outline"
-          className="h-16 text-lg border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
-          onClick={() => initiateClockAction('clock_out')}
-          disabled={processing || selfieRequired || biometricVerifying || !officerId || currentShiftStatus !== 'clocked_in'}
-        >
-          <XCircle className="h-6 w-6 mr-2" />
-          Clock OUT
-        </Button>
+      <div className="space-y-3">
+        {/* Shift type selector (only when off duty) */}
+        {currentShiftStatus === 'off' && (
+          <Card>
+            <CardContent className="pt-4 pb-2">
+              <div className="flex items-center gap-3">
+                <Label className="text-sm font-medium w-24">Shift Type</Label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={currentShiftType === 'day' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentShiftType('day')}
+                    disabled={processing || selfieRequired || biometricVerifying || currentShiftStatus !== 'off'}
+                  >
+                    <Sun className="h-4 w-4 mr-1" />
+                    Day
+                  </Button>
+                  <Button
+                    variant={currentShiftType === 'night' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentShiftType('night')}
+                    disabled={processing || selfieRequired || biometricVerifying || currentShiftStatus !== 'off'}
+                  >
+                    <Moon className="h-4 w-4 mr-1" />
+                    Night
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Clock IN / Break buttons when clocked in */}
+        {currentShiftStatus === 'clocked_in' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-14 text-base border-amber-500/50 text-amber-500 hover:bg-amber-500 hover:text-amber-500-foreground disabled:opacity-50"
+              onClick={() => initiateClockAction('break_start')}
+              disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !officerId}
+            >
+              <Coffee className="h-5 w-5 mr-2" />
+              Start Break
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-16 text-lg border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
+              onClick={() => initiateClockAction('clock_out')}
+              disabled={processing || selfieRequired || biometricVerifying || !officerId}
+            >
+              <XCircle className="h-6 w-6 mr-2" />
+              Clock OUT
+            </Button>
+          </div>
+        )}
+
+        {/* Break end button when on break */}
+        {currentShiftStatus === 'on_break' && (
+          <Button
+            size="lg"
+            className="w-full h-14 text-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => initiateClockAction('break_end')}
+            disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !officerId}
+          >
+            <CheckCircle className="h-6 w-6 mr-2" />
+            End Break
+          </Button>
+        )}
+
+        {/* Clock IN button when off duty */}
+        {currentShiftStatus === 'off' && (
+          <Button
+            size="lg"
+            className="w-full h-16 text-lg bg-green-600 hover:bg-green-700 disabled:opacity-50"
+            onClick={() => initiateClockAction('clock_in')}
+            disabled={processing || selfieRequired || biometricVerifying || gpsStatus !== 'verified' || !selectedSite || !officerId}
+          >
+            <CheckCircle className="h-6 w-6 mr-2" />
+            Clock IN ({currentShiftType})
+          </Button>
+        )}
       </div>
 
       {/* Last Event Banner */}
